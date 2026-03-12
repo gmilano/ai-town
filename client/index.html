@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Town</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
+
+  #header { background: #16213e; padding: 10px 20px; display: flex; align-items: center; gap: 16px; z-index: 10; border-bottom: 1px solid #0f3460; }
+  #header h1 { font-size: 18px; color: #e94560; font-weight: 700; }
+  #status { font-size: 13px; color: #aaa; }
+  #status span { color: #4ecca3; font-weight: 600; }
+
+  #main { display: flex; flex: 1; overflow: hidden; }
+  #canvas-wrap { flex: 1; position: relative; cursor: pointer; }
+  canvas { display: block; }
+
+  #sidebar { width: 300px; background: #16213e; border-left: 1px solid #0f3460; overflow-y: auto; display: flex; flex-direction: column; }
+  #sidebar-header { padding: 14px 16px; background: #0f3460; font-size: 14px; font-weight: 600; color: #4ecca3; }
+  #agent-detail { padding: 16px; flex: 1; }
+  #agent-detail .empty { color: #666; font-size: 13px; text-align: center; margin-top: 40px; }
+
+  .agent-name { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+  .agent-status { font-size: 12px; color: #aaa; margin-bottom: 12px; }
+  .agent-thought { background: #0f3460; border-radius: 8px; padding: 10px; font-size: 13px; font-style: italic; color: #ccc; margin-bottom: 16px; }
+
+  .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #e94560; margin-bottom: 8px; font-weight: 600; }
+  .memory-item { background: #1a1a2e; border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; font-size: 12px; color: #ccc; border-left: 3px solid #4ecca3; }
+  .conv-item { background: #1a1a2e; border-radius: 6px; padding: 10px; margin-bottom: 8px; }
+  .conv-msg { font-size: 12px; margin: 3px 0; }
+  .conv-msg .speaker { font-weight: 600; }
+
+  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #e94560; color: white; padding: 10px 20px; border-radius: 20px; font-size: 13px; display: none; z-index: 100; }
+
+  .conv-badge { position: fixed; top: 60px; right: 310px; background: #e94560; color: white; border-radius: 20px; padding: 6px 14px; font-size: 12px; display: none; z-index: 50; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <h1>🏘️ AI Town</h1>
+  <div id="status">
+    <span id="stat-agents">0</span> agents &nbsp;·&nbsp;
+    <span id="stat-talking">0</span> talking &nbsp;·&nbsp;
+    <span id="stat-convs">0</span> conversations today
+  </div>
+</div>
+
+<div id="main">
+  <div id="canvas-wrap">
+    <canvas id="game-canvas"></canvas>
+  </div>
+
+  <div id="sidebar">
+    <div id="sidebar-header">👤 Agent Details</div>
+    <div id="agent-detail">
+      <div class="empty">Click an agent to see their thoughts, memories, and conversations.</div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const WORLD_SIZE = 26;
+const TILE = 32;
+const CANVAS_SIZE = WORLD_SIZE * TILE; // 832px
+
+const COLORS = {
+  f1: 0xFFD700, f2: 0xFF6B6B, f3: 0x9B59B6,
+  f4: 0x27AE60, f5: 0x3498DB, f6: 0xE74C3C,
+  f7: 0xF39C12, f8: 0x1ABC9C, player: 0xFFFFFF
+};
+
+const CSS_COLORS = {
+  f1: '#FFD700', f2: '#FF6B6B', f3: '#9B59B6',
+  f4: '#27AE60', f5: '#3498DB', f6: '#E74C3C',
+  f7: '#F39C12', f8: '#1ABC9C'
+};
+
+// ── Pixi setup ──────────────────────────────────────────────────────────────
+const app = new PIXI.Application({
+  view: document.getElementById('game-canvas'),
+  width: CANVAS_SIZE,
+  height: CANVAS_SIZE,
+  backgroundColor: 0x3d7a3d,
+  antialias: true,
+});
+
+// Scale canvas to fit window
+function resizeCanvas() {
+  const wrap = document.getElementById('canvas-wrap');
+  const size = Math.min(wrap.clientWidth, wrap.clientHeight);
+  const scale = size / CANVAS_SIZE;
+  app.view.style.width = (CANVAS_SIZE * scale) + 'px';
+  app.view.style.height = (CANVAS_SIZE * scale) + 'px';
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+// ── Draw map ────────────────────────────────────────────────────────────────
+const mapLayer = new PIXI.Container();
+app.stage.addChild(mapLayer);
+
+// Grass tiles
+const gfx = new PIXI.Graphics();
+for (let x = 0; x < WORLD_SIZE; x++) {
+  for (let y = 0; y < WORLD_SIZE; y++) {
+    const shade = ((x + y) % 2 === 0) ? 0x4a7a3a : 0x528a42;
+    gfx.beginFill(shade);
+    gfx.drawRect(x * TILE, y * TILE, TILE, TILE);
+    gfx.endFill();
+  }
+}
+// Border
+gfx.lineStyle(2, 0x2a5a2a);
+gfx.drawRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+// Paths (horizontal + vertical)
+gfx.beginFill(0x8B7355, 0.4);
+gfx.drawRect(0, 12 * TILE, CANVAS_SIZE, TILE * 2);
+gfx.drawRect(12 * TILE, 0, TILE * 2, CANVAS_SIZE);
+gfx.endFill();
+// Water feature (pond)
+gfx.beginFill(0x4169E1, 0.7);
+gfx.drawCircle(5 * TILE, 5 * TILE, TILE * 2);
+gfx.endFill();
+// Market area
+gfx.beginFill(0x8B6914, 0.3);
+gfx.drawRect(17 * TILE, 17 * TILE, 4 * TILE, 4 * TILE);
+gfx.endFill();
+mapLayer.addChild(gfx);
+
+// Labels
+const addLabel = (text, x, y) => {
+  const t = new PIXI.Text(text, { fontSize: 9, fill: 0xffffff, alpha: 0.6 });
+  t.x = x; t.y = y;
+  mapLayer.addChild(t);
+};
+addLabel('🌊 Pond', 3.5 * TILE, 3.5 * TILE);
+addLabel('🏪 Market', 17.5 * TILE, 17.2 * TILE);
+addLabel('Town Square', 11 * TILE, 10.5 * TILE);
+
+// ── Agent layer ─────────────────────────────────────────────────────────────
+const agentLayer = new PIXI.Container();
+app.stage.addChild(agentLayer);
+
+const bubbleLayer = new PIXI.Container();
+app.stage.addChild(bubbleLayer);
+
+const agentSprites = new Map(); // id → { container, circle, label, bubble }
+let worldState = { agents: [], conversations: [] };
+let selectedAgentId = null;
+
+function getOrCreateSprite(agent) {
+  if (agentSprites.has(agent.id)) return agentSprites.get(agent.id);
+
+  const container = new PIXI.Container();
+  container.interactive = true;
+  container.buttonMode = true;
+  container.cursor = 'pointer';
+
+  // Shadow
+  const shadow = new PIXI.Graphics();
+  shadow.beginFill(0x000000, 0.25);
+  shadow.drawEllipse(0, 18, 14, 5);
+  shadow.endFill();
+  container.addChild(shadow);
+
+  // Circle body
+  const circle = new PIXI.Graphics();
+  const color = COLORS[agent.character] || 0xFFFFFF;
+  circle.beginFill(color);
+  circle.drawCircle(0, 0, 18);
+  circle.endFill();
+  circle.lineStyle(2, 0xffffff, 0.4);
+  circle.drawCircle(0, 0, 18);
+  container.addChild(circle);
+
+  // Initial letter
+  const letter = new PIXI.Text(agent.name[0], {
+    fontSize: 14, fill: 0xffffff, fontWeight: 'bold'
+  });
+  letter.anchor.set(0.5);
+  container.addChild(letter);
+
+  // Name label
+  const nameLabel = new PIXI.Text(agent.name, {
+    fontSize: 10, fill: 0xffffff, stroke: 0x000000, strokeThickness: 3
+  });
+  nameLabel.anchor.set(0.5);
+  nameLabel.y = 28;
+  container.addChild(nameLabel);
+
+  // Selection ring
+  const ring = new PIXI.Graphics();
+  ring.lineStyle(3, 0xFFFFFF, 0.9);
+  ring.drawCircle(0, 0, 22);
+  ring.visible = false;
+  container.addChild(ring);
+  container._ring = ring;
+
+  // Speech bubble (initially hidden)
+  const bubble = new PIXI.Container();
+  bubble.visible = false;
+  const bg = new PIXI.Graphics();
+  bg.beginFill(0x000000, 0.75);
+  bg.drawRoundedRect(-70, -48, 140, 34, 8);
+  bg.endFill();
+  const tip = new PIXI.Graphics();
+  tip.beginFill(0x000000, 0.75);
+  tip.drawPolygon([-5, -15, 5, -15, 0, -8]);
+  tip.endFill();
+  const bubbleText = new PIXI.Text('', { fontSize: 10, fill: 0xffffff, wordWrap: true, wordWrapWidth: 130, align: 'center' });
+  bubbleText.anchor.set(0.5, 0.5);
+  bubbleText.y = -31;
+  bubble.addChild(bg, tip, bubbleText);
+  bubble._text = bubbleText;
+  container.addChild(bubble);
+  container._bubble = bubble;
+
+  container.on('pointerdown', () => selectAgent(agent.id));
+
+  agentLayer.addChild(container);
+  agentSprites.set(agent.id, container);
+  return container;
+}
+
+let animTick = 0;
+function updateSprites(state) {
+  animTick++;
+  worldState = state;
+
+  for (const agent of state.agents) {
+    const sprite = getOrCreateSprite(agent);
+    const px = agent.x * TILE;
+    const py = agent.y * TILE;
+
+    // Smooth movement
+    sprite.x += (px - sprite.x) * 0.2;
+    sprite.y += (py - sprite.y) * 0.2;
+
+    // Walking bounce
+    if (agent.status === 'walking') {
+      sprite.y += Math.sin(animTick * 0.3) * 1.5;
+    }
+
+    // Talking pulse
+    if (agent.status === 'talking') {
+      const scale = 1 + Math.sin(animTick * 0.1) * 0.08;
+      sprite.scale.set(scale);
+    } else {
+      sprite.scale.set(1);
+    }
+
+    // Selection ring
+    sprite._ring.visible = (agent.id === selectedAgentId);
+
+    // Speech bubble
+    const bubble = sprite._bubble;
+    const conv = state.conversations.find(c => c.agent1 === agent.name || c.agent2 === agent.name);
+    if (conv && conv.messages.length > 0) {
+      const lastMsg = conv.messages[conv.messages.length - 1];
+      const text = lastMsg.text || lastMsg.name + ': ' + (lastMsg[0] || '');
+      const display = (typeof text === 'string' ? text : '').substring(0, 60);
+      if (display !== bubble._text.text) bubble._text.text = display;
+      bubble.visible = true;
+    } else {
+      bubble.visible = false;
+    }
+  }
+
+  updateStats(state);
+  if (selectedAgentId) updateSidebarLive(selectedAgentId, state);
+}
+
+function updateStats(state) {
+  document.getElementById('stat-agents').textContent = state.agents.length;
+  document.getElementById('stat-talking').textContent = state.agents.filter(a => a.status === 'talking').length;
+}
+
+async function selectAgent(id) {
+  selectedAgentId = id;
+  // Update ring on all sprites
+  agentSprites.forEach((s, sid) => { s._ring.visible = (sid === id); });
+  await loadAgentDetails(id);
+}
+
+async function loadAgentDetails(id) {
+  try {
+    const res = await fetch(`/api/agent/${id}`);
+    const data = await res.json();
+    renderSidebar(data);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function updateSidebarLive(id, state) {
+  const agent = state.agents.find(a => a.id === id);
+  if (!agent) return;
+  const thoughtEl = document.getElementById('live-thought');
+  if (thoughtEl && agent.thought) thoughtEl.textContent = `"${agent.thought}"`;
+  const statusEl = document.getElementById('live-status');
+  if (statusEl) statusEl.textContent = agent.status + (agent.status === 'talking' ? ' 💬' : agent.status === 'walking' ? ' 🚶' : ' 💤');
+}
+
+function renderSidebar(data) {
+  const { agent, memories, conversations } = data;
+  const color = CSS_COLORS[agent.character] || '#fff';
+  const conv = worldState.conversations.find(c => c.agent1 === agent.name || c.agent2 === agent.name);
+
+  let html = `
+    <div class="agent-name" style="color:${color}">${agent.name}</div>
+    <div class="agent-status" id="live-status">${agent.status} ${agent.status === 'talking' ? '💬' : agent.status === 'walking' ? '🚶' : '💤'}</div>
+    <div class="agent-thought" id="live-thought">"${agent.current_thought || 'Just hanging around...'}"</div>
+  `;
+
+  if (conv) {
+    html += `<div class="section-title">💬 Active Conversation</div>`;
+    const other = conv.agent1 === agent.name ? conv.agent2 : conv.agent1;
+    html += `<div class="conv-item"><div style="font-size:12px;color:#aaa;margin-bottom:6px">Talking to <strong style="color:${color}">${other}</strong></div>`;
+    for (const msg of (conv.messages || []).slice(-4)) {
+      const name = msg.name || '';
+      const text = msg.text || '';
+      html += `<div class="conv-msg"><span class="speaker" style="color:${name === agent.name ? color : '#aaa'}">${name}:</span> ${text}</div>`;
+    }
+    html += '</div>';
+  }
+
+  if (memories.length > 0) {
+    html += `<div class="section-title" style="margin-top:12px">🧠 Memories (${memories.length})</div>`;
+    for (const m of memories.slice(0, 5)) {
+      html += `<div class="memory-item">${m.description}</div>`;
+    }
+  }
+
+  if (conversations.length > 0) {
+    html += `<div class="section-title" style="margin-top:12px">📜 Past Conversations</div>`;
+    for (const c of conversations.slice(0, 3)) {
+      const msgs = c.messages || [];
+      html += `<div class="conv-item">`;
+      for (const m of msgs.slice(0, 3)) {
+        const n = m.name || '';
+        const t = m.text || '';
+        html += `<div class="conv-msg"><span class="speaker" style="color:${n === agent.name ? color : '#aaa'}">${n}:</span> ${t}</div>`;
+      }
+      html += `</div>`;
+    }
+  }
+
+  document.getElementById('agent-detail').innerHTML = html;
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 3000);
+}
+
+// ── Socket.io ───────────────────────────────────────────────────────────────
+const socket = io();
+socket.on('connect', () => console.log('[io] Connected'));
+socket.on('worldState', updateSprites);
+
+// Initial fetch
+fetch('/api/world').then(r => r.json()).then(updateSprites).catch(console.error);
+
+// Refresh sidebar every 10s when agent selected
+setInterval(() => {
+  if (selectedAgentId) loadAgentDetails(selectedAgentId);
+}, 10000);
+</script>
+</body>
+</html>
