@@ -34,8 +34,8 @@ app.get('/api/agent/:id', async (req, res) => {
   if (!agent) return res.status(404).json({ error: 'not found' });
   const memories = await queryAll('SELECT * FROM memories WHERE agent_id=$1 ORDER BY last_accessed DESC LIMIT 10', [agent.id]);
   const convs = await queryAll(`
-    SELECT c.*, 
-      (SELECT json_agg(m ORDER BY m.id) FROM (SELECT msg.text, a.name FROM messages msg JOIN agents a ON msg.agent_id=a.id WHERE msg.conversation_id=c.id LIMIT 20) m) as messages
+    SELECT c.*,
+      (SELECT json_agg(m) FROM (SELECT msg.id, msg.text, a.name FROM messages msg JOIN agents a ON msg.agent_id=a.id WHERE msg.conversation_id=c.id ORDER BY msg.id LIMIT 20) m) as messages
     FROM conversations c
     WHERE (c.agent1_id=$1 OR c.agent2_id=$1) AND c.status='ended'
     ORDER BY c.started_at DESC LIMIT 5
