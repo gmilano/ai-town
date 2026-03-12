@@ -2,41 +2,82 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>AI Town</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a2e; color: #eee; font-family: -apple-system, 'Segoe UI', sans-serif; touch-action: none; }
 
-  #header { background: #16213e; padding: 10px 20px; display: flex; align-items: center; gap: 16px; z-index: 10; border-bottom: 1px solid #0f3460; }
-  #header h1 { font-size: 18px; color: #e94560; font-weight: 700; }
-  #status { font-size: 13px; color: #aaa; }
+  #header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 20;
+    background: rgba(22,33,62,0.92); backdrop-filter: blur(8px);
+    padding: 10px 16px; display: flex; align-items: center; gap: 12px;
+    border-bottom: 1px solid #0f3460;
+  }
+  #header h1 { font-size: 17px; color: #e94560; font-weight: 700; }
+  #status { font-size: 12px; color: #aaa; display: flex; gap: 10px; flex-wrap: wrap; }
   #status span { color: #4ecca3; font-weight: 600; }
 
-  #main { display: flex; flex: 1; overflow: hidden; }
-  #canvas-wrap { flex: 1; position: relative; cursor: pointer; }
-  canvas { display: block; }
+  #canvas-wrap {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    overflow: hidden; cursor: grab;
+  }
+  #canvas-wrap:active { cursor: grabbing; }
+  canvas { display: block; transform-origin: 0 0; }
 
-  #sidebar { width: 300px; background: #16213e; border-left: 1px solid #0f3460; overflow-y: auto; display: flex; flex-direction: column; }
-  #sidebar-header { padding: 14px 16px; background: #0f3460; font-size: 14px; font-weight: 600; color: #4ecca3; }
-  #agent-detail { padding: 16px; flex: 1; }
-  #agent-detail .empty { color: #666; font-size: 13px; text-align: center; margin-top: 40px; }
+  /* ── Bottom Sheet ───────────────────────────────────────────── */
+  #sheet {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    background: #16213e;
+    border-radius: 20px 20px 0 0;
+    border-top: 1px solid #0f3460;
+    transform: translateY(100%);
+    transition: transform 0.35s cubic-bezier(.4,0,.2,1);
+    max-height: 72vh; overflow-y: auto;
+    padding-bottom: env(safe-area-inset-bottom, 20px);
+  }
+  #sheet.open { transform: translateY(0); }
 
-  .agent-name { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
-  .agent-status { font-size: 12px; color: #aaa; margin-bottom: 12px; }
-  .agent-thought { background: #0f3460; border-radius: 8px; padding: 10px; font-size: 13px; font-style: italic; color: #ccc; margin-bottom: 16px; }
+  #sheet-handle {
+    display: flex; justify-content: center; padding: 12px 0 6px;
+    cursor: pointer;
+  }
+  #sheet-handle::after {
+    content: ''; width: 40px; height: 4px;
+    background: #0f3460; border-radius: 2px;
+  }
+  #sheet-content { padding: 0 18px 24px; }
 
-  .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #e94560; margin-bottom: 8px; font-weight: 600; }
-  .memory-item { background: #1a1a2e; border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; font-size: 12px; color: #ccc; border-left: 3px solid #4ecca3; }
-  .conv-item { background: #1a1a2e; border-radius: 6px; padding: 10px; margin-bottom: 8px; }
-  .conv-msg { font-size: 12px; margin: 3px 0; }
-  .conv-msg .speaker { font-weight: 600; }
+  .agent-name { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+  .agent-status-line { font-size: 13px; color: #aaa; margin-bottom: 14px; }
+  .agent-thought {
+    background: #0f3460; border-radius: 10px; padding: 12px;
+    font-size: 14px; font-style: italic; color: #ddd; margin-bottom: 18px;
+    border-left: 3px solid #4ecca3;
+  }
+  .section-title {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+    color: #e94560; margin-bottom: 10px; font-weight: 600;
+  }
+  .memory-item {
+    background: #1a1a2e; border-radius: 8px; padding: 10px 12px;
+    margin-bottom: 8px; font-size: 13px; color: #ccc;
+    border-left: 3px solid #4ecca3;
+  }
+  .conv-item { background: #1a1a2e; border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+  .conv-msg { font-size: 13px; margin: 4px 0; line-height: 1.4; }
+  .conv-msg .speaker { font-weight: 700; }
 
-  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #e94560; color: white; padding: 10px 20px; border-radius: 20px; font-size: 13px; display: none; z-index: 100; }
-
-  .conv-badge { position: fixed; top: 60px; right: 310px; background: #e94560; color: white; border-radius: 20px; padding: 6px 14px; font-size: 12px; display: none; z-index: 50; }
+  /* ── Hint ───────────────────────────────────────────────────── */
+  #hint {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.6); color: #ccc; font-size: 12px;
+    padding: 8px 16px; border-radius: 20px; pointer-events: none;
+    transition: opacity 0.4s; white-space: nowrap;
+  }
+  #hint.hidden { opacity: 0; }
 </style>
 </head>
 <body>
@@ -44,336 +85,300 @@
 <div id="header">
   <h1>🏘️ AI Town</h1>
   <div id="status">
-    <span id="stat-agents">0</span> agents &nbsp;·&nbsp;
-    <span id="stat-talking">0</span> talking &nbsp;·&nbsp;
-    <span id="stat-convs">0</span> conversations today
+    <div><span id="stat-agents">0</span> agents</div>
+    <div><span id="stat-talking">0</span> talking</div>
+    <div><span id="stat-mem">0</span> memories</div>
   </div>
 </div>
 
-<div id="main">
-  <div id="canvas-wrap">
-    <canvas id="game-canvas"></canvas>
-  </div>
+<div id="canvas-wrap"></div>
 
-  <div id="sidebar">
-    <div id="sidebar-header">👤 Agent Details</div>
-    <div id="agent-detail">
-      <div class="empty">Click an agent to see their thoughts, memories, and conversations.</div>
-    </div>
-  </div>
+<div id="hint">Tap an agent to see their thoughts</div>
+
+<!-- Bottom sheet -->
+<div id="sheet">
+  <div id="sheet-handle" onclick="closeSheet()"></div>
+  <div id="sheet-content"><div style="color:#666;text-align:center;padding:20px">Loading...</div></div>
 </div>
-
-<div id="toast"></div>
 
 <script>
-const WORLD_SIZE = 26;
-const TILE = 32;
-const CANVAS_SIZE = WORLD_SIZE * TILE; // 832px
+const WORLD = 26, TILE = 32, CSIZE = WORLD * TILE;
+const COLORS = { f1:0xFFD700, f2:0xFF6B6B, f3:0x9B59B6, f4:0x27AE60, f5:0x3498DB, f6:0xE74C3C, f7:0xF39C12, f8:0x1ABC9C };
+const CSSCOLORS = { f1:'#FFD700', f2:'#FF6B6B', f3:'#9B59B6', f4:'#27AE60', f5:'#3498DB', f6:'#E74C3C', f7:'#F39C12', f8:'#1ABC9C' };
 
-const COLORS = {
-  f1: 0xFFD700, f2: 0xFF6B6B, f3: 0x9B59B6,
-  f4: 0x27AE60, f5: 0x3498DB, f6: 0xE74C3C,
-  f7: 0xF39C12, f8: 0x1ABC9C, player: 0xFFFFFF
-};
+// ── Pixi setup ──────────────────────────────────────────────────
+const app = new PIXI.Application({ width: CSIZE, height: CSIZE, backgroundColor: 0x3d7a3d, antialias: true, resolution: window.devicePixelRatio || 1, autoDensity: true });
+document.getElementById('canvas-wrap').appendChild(app.view);
+app.view.style.touchAction = 'none';
 
-const CSS_COLORS = {
-  f1: '#FFD700', f2: '#FF6B6B', f3: '#9B59B6',
-  f4: '#27AE60', f5: '#3498DB', f6: '#E74C3C',
-  f7: '#F39C12', f8: '#1ABC9C'
-};
+// ── Pan + pinch-to-zoom ─────────────────────────────────────────
+let scale = 1, offsetX = 0, offsetY = 0;
+let dragging = false, lastX = 0, lastY = 0;
+let pinchDist = 0;
 
-// ── Pixi setup ──────────────────────────────────────────────────────────────
-const app = new PIXI.Application({
-  view: document.getElementById('game-canvas'),
-  width: CANVAS_SIZE,
-  height: CANVAS_SIZE,
-  backgroundColor: 0x3d7a3d,
-  antialias: true,
-});
+function applyTransform() {
+  app.view.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+}
 
-// Scale canvas to fit window
-function resizeCanvas() {
+function fitToScreen() {
   const wrap = document.getElementById('canvas-wrap');
-  const size = Math.min(wrap.clientWidth, wrap.clientHeight);
-  const scale = size / CANVAS_SIZE;
-  app.view.style.width = (CANVAS_SIZE * scale) + 'px';
-  app.view.style.height = (CANVAS_SIZE * scale) + 'px';
+  scale = Math.min(wrap.clientWidth / CSIZE, (wrap.clientHeight - 50) / CSIZE);
+  offsetX = (wrap.clientWidth - CSIZE * scale) / 2;
+  offsetY = 50 + (wrap.clientHeight - 50 - CSIZE * scale) / 2;
+  applyTransform();
 }
-window.addEventListener('resize', resizeCanvas);
-resizeCanvas();
+fitToScreen();
+window.addEventListener('resize', fitToScreen);
 
-// ── Draw map ────────────────────────────────────────────────────────────────
-const mapLayer = new PIXI.Container();
-app.stage.addChild(mapLayer);
+// Touch events for pan + pinch
+const wrap = document.getElementById('canvas-wrap');
+wrap.addEventListener('touchstart', e => {
+  if (e.touches.length === 1) { dragging = true; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; }
+  if (e.touches.length === 2) { pinchDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY); }
+}, { passive: true });
 
-// Grass tiles
-const gfx = new PIXI.Graphics();
-for (let x = 0; x < WORLD_SIZE; x++) {
-  for (let y = 0; y < WORLD_SIZE; y++) {
-    const shade = ((x + y) % 2 === 0) ? 0x4a7a3a : 0x528a42;
-    gfx.beginFill(shade);
-    gfx.drawRect(x * TILE, y * TILE, TILE, TILE);
-    gfx.endFill();
+wrap.addEventListener('touchmove', e => {
+  if (e.touches.length === 1 && dragging) {
+    offsetX += e.touches[0].clientX - lastX;
+    offsetY += e.touches[0].clientY - lastY;
+    lastX = e.touches[0].clientX; lastY = e.touches[0].clientY;
+    applyTransform();
   }
+  if (e.touches.length === 2) {
+    const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+    const delta = d / pinchDist;
+    scale = Math.min(3, Math.max(0.3, scale * delta));
+    pinchDist = d;
+    applyTransform();
+  }
+}, { passive: true });
+
+wrap.addEventListener('touchend', () => { dragging = false; });
+
+// Mouse pan
+wrap.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+wrap.addEventListener('mousemove', e => { if (!dragging) return; offsetX += e.clientX - lastX; offsetY += e.clientY - lastY; lastX = e.clientX; lastY = e.clientY; applyTransform(); });
+wrap.addEventListener('mouseup', () => dragging = false);
+wrap.addEventListener('wheel', e => { scale = Math.min(3, Math.max(0.3, scale * (e.deltaY < 0 ? 1.1 : 0.9))); applyTransform(); }, { passive: true });
+
+// ── Draw map ────────────────────────────────────────────────────
+const mapGfx = new PIXI.Graphics();
+for (let x = 0; x < WORLD; x++) for (let y = 0; y < WORLD; y++) {
+  mapGfx.beginFill((x+y)%2===0 ? 0x4a7a3a : 0x528a42);
+  mapGfx.drawRect(x*TILE, y*TILE, TILE, TILE);
+  mapGfx.endFill();
 }
-// Border
-gfx.lineStyle(2, 0x2a5a2a);
-gfx.drawRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-// Paths (horizontal + vertical)
-gfx.beginFill(0x8B7355, 0.4);
-gfx.drawRect(0, 12 * TILE, CANVAS_SIZE, TILE * 2);
-gfx.drawRect(12 * TILE, 0, TILE * 2, CANVAS_SIZE);
-gfx.endFill();
-// Water feature (pond)
-gfx.beginFill(0x4169E1, 0.7);
-gfx.drawCircle(5 * TILE, 5 * TILE, TILE * 2);
-gfx.endFill();
-// Market area
-gfx.beginFill(0x8B6914, 0.3);
-gfx.drawRect(17 * TILE, 17 * TILE, 4 * TILE, 4 * TILE);
-gfx.endFill();
-mapLayer.addChild(gfx);
+// Paths
+mapGfx.beginFill(0x8B7355, 0.4);
+mapGfx.drawRect(0, 12*TILE, CSIZE, TILE*2);
+mapGfx.drawRect(12*TILE, 0, TILE*2, CSIZE);
+mapGfx.endFill();
+// Pond
+mapGfx.beginFill(0x4169E1, 0.7);
+mapGfx.drawCircle(5*TILE, 5*TILE, TILE*1.8);
+mapGfx.endFill();
+// Market
+mapGfx.beginFill(0x8B6914, 0.3);
+mapGfx.drawRect(17*TILE, 17*TILE, 4*TILE, 4*TILE);
+mapGfx.endFill();
+app.stage.addChild(mapGfx);
 
-// Labels
-const addLabel = (text, x, y) => {
-  const t = new PIXI.Text(text, { fontSize: 9, fill: 0xffffff, alpha: 0.6 });
-  t.x = x; t.y = y;
-  mapLayer.addChild(t);
+const addLabel = (t, x, y) => {
+  const l = new PIXI.Text(t, { fontSize: 9, fill: 0xffffff, alpha: 0.5 });
+  l.x = x; l.y = y; app.stage.addChild(l);
 };
-addLabel('🌊 Pond', 3.5 * TILE, 3.5 * TILE);
-addLabel('🏪 Market', 17.5 * TILE, 17.2 * TILE);
-addLabel('Town Square', 11 * TILE, 10.5 * TILE);
+addLabel('🌊 Pond', 3.2*TILE, 3.5*TILE);
+addLabel('🏪 Market', 17.5*TILE, 17.2*TILE);
+addLabel('Town Square', 11*TILE, 10.5*TILE);
 
-// ── Agent layer ─────────────────────────────────────────────────────────────
+// ── Agent sprites ───────────────────────────────────────────────
 const agentLayer = new PIXI.Container();
 app.stage.addChild(agentLayer);
-
-const bubbleLayer = new PIXI.Container();
-app.stage.addChild(bubbleLayer);
-
-const agentSprites = new Map(); // id → { container, circle, label, bubble }
+const sprites = new Map();
 let worldState = { agents: [], conversations: [] };
-let selectedAgentId = null;
+let selectedId = null;
+let tick = 0;
 
-function getOrCreateSprite(agent) {
-  if (agentSprites.has(agent.id)) return agentSprites.get(agent.id);
-
-  const container = new PIXI.Container();
-  container.interactive = true;
-  container.buttonMode = true;
-  container.cursor = 'pointer';
+function getSprite(agent) {
+  if (sprites.has(agent.id)) return sprites.get(agent.id);
+  const c = new PIXI.Container();
+  c.interactive = true; c.cursor = 'pointer';
 
   // Shadow
-  const shadow = new PIXI.Graphics();
-  shadow.beginFill(0x000000, 0.25);
-  shadow.drawEllipse(0, 18, 14, 5);
-  shadow.endFill();
-  container.addChild(shadow);
+  const sh = new PIXI.Graphics();
+  sh.beginFill(0x000000, 0.2); sh.drawEllipse(0, 16, 12, 4); sh.endFill();
+  c.addChild(sh);
 
-  // Circle body
+  // Body circle
   const circle = new PIXI.Graphics();
-  const color = COLORS[agent.character] || 0xFFFFFF;
-  circle.beginFill(color);
-  circle.drawCircle(0, 0, 18);
-  circle.endFill();
-  circle.lineStyle(2, 0xffffff, 0.4);
-  circle.drawCircle(0, 0, 18);
-  container.addChild(circle);
+  const col = COLORS[agent.character] || 0xFFFFFF;
+  circle.beginFill(col); circle.drawCircle(0, 0, 16); circle.endFill();
+  circle.lineStyle(2, 0xffffff, 0.5); circle.drawCircle(0, 0, 16);
+  c.addChild(circle);
 
-  // Initial letter
-  const letter = new PIXI.Text(agent.name[0], {
-    fontSize: 14, fill: 0xffffff, fontWeight: 'bold'
-  });
-  letter.anchor.set(0.5);
-  container.addChild(letter);
+  // Letter
+  const letter = new PIXI.Text(agent.name[0], { fontSize: 13, fill: 0xffffff, fontWeight: 'bold' });
+  letter.anchor.set(0.5); c.addChild(letter);
 
-  // Name label
-  const nameLabel = new PIXI.Text(agent.name, {
-    fontSize: 10, fill: 0xffffff, stroke: 0x000000, strokeThickness: 3
-  });
-  nameLabel.anchor.set(0.5);
-  nameLabel.y = 28;
-  container.addChild(nameLabel);
+  // Name tag
+  const tag = new PIXI.Text(agent.name, { fontSize: 9, fill: 0xffffff, stroke: 0x000000, strokeThickness: 3 });
+  tag.anchor.set(0.5); tag.y = 25; c.addChild(tag);
 
   // Selection ring
   const ring = new PIXI.Graphics();
-  ring.lineStyle(3, 0xFFFFFF, 0.9);
-  ring.drawCircle(0, 0, 22);
-  ring.visible = false;
-  container.addChild(ring);
-  container._ring = ring;
+  ring.lineStyle(3, 0xFFFFFF); ring.drawCircle(0, 0, 21); ring.visible = false;
+  c.addChild(ring); c._ring = ring;
 
-  // Speech bubble (initially hidden)
-  const bubble = new PIXI.Container();
-  bubble.visible = false;
+  // Speech bubble
+  const bub = new PIXI.Container();
   const bg = new PIXI.Graphics();
-  bg.beginFill(0x000000, 0.75);
-  bg.drawRoundedRect(-70, -48, 140, 34, 8);
-  bg.endFill();
-  const tip = new PIXI.Graphics();
-  tip.beginFill(0x000000, 0.75);
-  tip.drawPolygon([-5, -15, 5, -15, 0, -8]);
-  tip.endFill();
-  const bubbleText = new PIXI.Text('', { fontSize: 10, fill: 0xffffff, wordWrap: true, wordWrapWidth: 130, align: 'center' });
-  bubbleText.anchor.set(0.5, 0.5);
-  bubbleText.y = -31;
-  bubble.addChild(bg, tip, bubbleText);
-  bubble._text = bubbleText;
-  container.addChild(bubble);
-  container._bubble = bubble;
+  bg.beginFill(0x000000, 0.8); bg.drawRoundedRect(-65, -52, 130, 32, 8); bg.endFill();
+  bg.beginFill(0x000000, 0.8); bg.drawPolygon([-5,-21, 5,-21, 0,-14]); bg.endFill();
+  const bt = new PIXI.Text('', { fontSize: 9, fill: 0xffffff, wordWrap: true, wordWrapWidth: 118, align: 'center' });
+  bt.anchor.set(0.5); bt.y = -36;
+  bub.addChild(bg, bt); bub._t = bt; bub.visible = false;
+  c.addChild(bub); c._bub = bub;
 
-  container.on('pointerdown', () => selectAgent(agent.id));
-
-  agentLayer.addChild(container);
-  agentSprites.set(agent.id, container);
-  return container;
+  c.on('pointerdown', () => onAgentTap(agent.id));
+  agentLayer.addChild(c);
+  sprites.set(agent.id, c);
+  c.x = agent.x * TILE; c.y = agent.y * TILE;
+  return c;
 }
 
-let animTick = 0;
-function updateSprites(state) {
-  animTick++;
+function update(state) {
+  tick++;
   worldState = state;
 
-  for (const agent of state.agents) {
-    const sprite = getOrCreateSprite(agent);
-    const px = agent.x * TILE;
-    const py = agent.y * TILE;
-
-    // Smooth movement
-    sprite.x += (px - sprite.x) * 0.2;
-    sprite.y += (py - sprite.y) * 0.2;
-
-    // Walking bounce
-    if (agent.status === 'walking') {
-      sprite.y += Math.sin(animTick * 0.3) * 1.5;
-    }
-
-    // Talking pulse
-    if (agent.status === 'talking') {
-      const scale = 1 + Math.sin(animTick * 0.1) * 0.08;
-      sprite.scale.set(scale);
-    } else {
-      sprite.scale.set(1);
-    }
-
-    // Selection ring
-    sprite._ring.visible = (agent.id === selectedAgentId);
-
-    // Speech bubble
-    const bubble = sprite._bubble;
-    const conv = state.conversations.find(c => c.agent1 === agent.name || c.agent2 === agent.name);
-    if (conv && conv.messages.length > 0) {
-      const lastMsg = conv.messages[conv.messages.length - 1];
-      const text = lastMsg.text || lastMsg.name + ': ' + (lastMsg[0] || '');
-      const display = (typeof text === 'string' ? text : '').substring(0, 60);
-      if (display !== bubble._text.text) bubble._text.text = display;
-      bubble.visible = true;
-    } else {
-      bubble.visible = false;
-    }
-  }
-
-  updateStats(state);
-  if (selectedAgentId) updateSidebarLive(selectedAgentId, state);
-}
-
-function updateStats(state) {
+  // Stats
   document.getElementById('stat-agents').textContent = state.agents.length;
   document.getElementById('stat-talking').textContent = state.agents.filter(a => a.status === 'talking').length;
+
+  for (const a of state.agents) {
+    const s = getSprite(a);
+    const tx = a.x * TILE, ty = a.y * TILE;
+    s.x += (tx - s.x) * 0.25;
+    s.y += (ty - s.y) * 0.25;
+    if (a.status === 'walking') s.y += Math.sin(tick * 0.35) * 2;
+    if (a.status === 'talking') { const sc = 1 + Math.sin(tick * 0.12) * 0.07; s.scale.set(sc); }
+    else s.scale.set(1);
+    s._ring.visible = (a.id === selectedId);
+
+    // Speech bubble — find this agent's conversation
+    const conv = state.conversations.find(c => c.agent1 === a.name || c.agent2 === a.name);
+    if (conv && conv.messages && conv.messages.length > 0) {
+      const lastMsg = conv.messages[conv.messages.length - 1];
+      const text = (lastMsg.text || '').substring(0, 55) + (lastMsg.text?.length > 55 ? '…' : '');
+      if (text !== s._bub._t.text) s._bub._t.text = text;
+      s._bub.visible = true;
+    } else {
+      s._bub.visible = false;
+    }
+  }
+
+  if (selectedId) refreshSheetLive(selectedId, state);
 }
 
-async function selectAgent(id) {
-  selectedAgentId = id;
-  // Update ring on all sprites
-  agentSprites.forEach((s, sid) => { s._ring.visible = (sid === id); });
-  await loadAgentDetails(id);
+// ── Agent tap ───────────────────────────────────────────────────
+let hintHidden = false;
+async function onAgentTap(id) {
+  selectedId = id;
+  sprites.forEach((s, sid) => s._ring.visible = sid === id);
+  if (!hintHidden) { document.getElementById('hint').classList.add('hidden'); hintHidden = true; }
+  openSheet();
+  await loadAgentSheet(id);
 }
 
-async function loadAgentDetails(id) {
+function openSheet() {
+  document.getElementById('sheet').classList.add('open');
+}
+
+function closeSheet() {
+  document.getElementById('sheet').classList.remove('open');
+  selectedId = null;
+  sprites.forEach(s => s._ring.visible = false);
+}
+
+function refreshSheetLive(id, state) {
+  const a = state.agents.find(x => x.id === id);
+  if (!a) return;
+  const el = document.getElementById('live-thought');
+  if (el && a.thought) el.textContent = `"${a.thought}"`;
+  const sl = document.getElementById('live-status');
+  if (sl) sl.textContent = `${a.status} ${a.status==='talking'?'💬':a.status==='walking'?'🚶':'💤'}`;
+
+  // Update active conv in sheet
+  const conv = state.conversations.find(c => c.agent1 === a.name || c.agent2 === a.name);
+  const cEl = document.getElementById('live-conv');
+  if (cEl && conv && conv.messages?.length) {
+    const color = CSSCOLORS[a.character] || '#fff';
+    let html = `<div class="section-title">💬 Now talking</div><div class="conv-item">`;
+    for (const m of conv.messages.slice(-4)) {
+      const isSelf = m.name === a.name;
+      html += `<div class="conv-msg"><span class="speaker" style="color:${isSelf ? color : '#aaa'}">${m.name}:</span> ${m.text || ''}</div>`;
+    }
+    html += `</div>`;
+    cEl.innerHTML = html;
+  }
+}
+
+async function loadAgentSheet(id) {
+  const content = document.getElementById('sheet-content');
+  content.innerHTML = '<div style="color:#666;text-align:center;padding:20px">Loading...</div>';
   try {
     const res = await fetch(`/api/agent/${id}`);
-    const data = await res.json();
-    renderSidebar(data);
-  } catch (e) {
-    console.error(e);
-  }
-}
+    const { agent, memories, conversations } = await res.json();
+    const color = CSSCOLORS[agent.character] || '#fff';
+    const liveAgent = worldState.agents.find(a => a.id === id);
+    const status = liveAgent?.status || agent.status;
 
-function updateSidebarLive(id, state) {
-  const agent = state.agents.find(a => a.id === id);
-  if (!agent) return;
-  const thoughtEl = document.getElementById('live-thought');
-  if (thoughtEl && agent.thought) thoughtEl.textContent = `"${agent.thought}"`;
-  const statusEl = document.getElementById('live-status');
-  if (statusEl) statusEl.textContent = agent.status + (agent.status === 'talking' ? ' 💬' : agent.status === 'walking' ? ' 🚶' : ' 💤');
-}
+    let html = `
+      <div class="agent-name" style="color:${color}">${agent.name}</div>
+      <div class="agent-status-line" id="live-status">${status} ${status==='talking'?'💬':status==='walking'?'🚶':'💤'}</div>
+      <div class="agent-thought" id="live-thought">"${agent.current_thought || 'Just hanging around...'}"</div>
+      <div id="live-conv"></div>
+    `;
 
-function renderSidebar(data) {
-  const { agent, memories, conversations } = data;
-  const color = CSS_COLORS[agent.character] || '#fff';
-  const conv = worldState.conversations.find(c => c.agent1 === agent.name || c.agent2 === agent.name);
-
-  let html = `
-    <div class="agent-name" style="color:${color}">${agent.name}</div>
-    <div class="agent-status" id="live-status">${agent.status} ${agent.status === 'talking' ? '💬' : agent.status === 'walking' ? '🚶' : '💤'}</div>
-    <div class="agent-thought" id="live-thought">"${agent.current_thought || 'Just hanging around...'}"</div>
-  `;
-
-  if (conv) {
-    html += `<div class="section-title">💬 Active Conversation</div>`;
-    const other = conv.agent1 === agent.name ? conv.agent2 : conv.agent1;
-    html += `<div class="conv-item"><div style="font-size:12px;color:#aaa;margin-bottom:6px">Talking to <strong style="color:${color}">${other}</strong></div>`;
-    for (const msg of (conv.messages || []).slice(-4)) {
-      const name = msg.name || '';
-      const text = msg.text || '';
-      html += `<div class="conv-msg"><span class="speaker" style="color:${name === agent.name ? color : '#aaa'}">${name}:</span> ${text}</div>`;
+    if (memories.length) {
+      html += `<div class="section-title">🧠 Memories (${memories.length})</div>`;
+      for (const m of memories.slice(0, 5))
+        html += `<div class="memory-item">${m.description}</div>`;
     }
-    html += '</div>';
-  }
 
-  if (memories.length > 0) {
-    html += `<div class="section-title" style="margin-top:12px">🧠 Memories (${memories.length})</div>`;
-    for (const m of memories.slice(0, 5)) {
-      html += `<div class="memory-item">${m.description}</div>`;
-    }
-  }
-
-  if (conversations.length > 0) {
-    html += `<div class="section-title" style="margin-top:12px">📜 Past Conversations</div>`;
-    for (const c of conversations.slice(0, 3)) {
-      const msgs = c.messages || [];
-      html += `<div class="conv-item">`;
-      for (const m of msgs.slice(0, 3)) {
-        const n = m.name || '';
-        const t = m.text || '';
-        html += `<div class="conv-msg"><span class="speaker" style="color:${n === agent.name ? color : '#aaa'}">${n}:</span> ${t}</div>`;
+    if (conversations.length) {
+      html += `<div class="section-title" style="margin-top:16px">📜 Past conversations</div>`;
+      for (const c of conversations.slice(0, 3)) {
+        html += `<div class="conv-item">`;
+        for (const m of (c.messages || []).slice(0, 4))
+          html += `<div class="conv-msg"><span class="speaker" style="color:${m.name===agent.name?color:'#aaa'}">${m.name}:</span> ${m.text||''}</div>`;
+        html += `</div>`;
       }
-      html += `</div>`;
     }
+
+    content.innerHTML = html;
+    // Apply live state
+    refreshSheetLive(id, worldState);
+  } catch (e) {
+    content.innerHTML = '<div style="color:#e94560;padding:20px">Error loading agent data</div>';
   }
-
-  document.getElementById('agent-detail').innerHTML = html;
 }
 
-function showToast(msg) {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.style.display = 'block';
-  setTimeout(() => t.style.display = 'none', 3000);
-}
-
-// ── Socket.io ───────────────────────────────────────────────────────────────
+// ── Socket ──────────────────────────────────────────────────────
 const socket = io();
-socket.on('connect', () => console.log('[io] Connected'));
-socket.on('worldState', updateSprites);
+socket.on('worldState', update);
+fetch('/api/world').then(r => r.json()).then(update).catch(console.error);
 
-// Initial fetch
-fetch('/api/world').then(r => r.json()).then(updateSprites).catch(console.error);
+// Auto-refresh selected agent panel every 10s
+setInterval(() => { if (selectedId) loadAgentSheet(selectedId); }, 10000);
 
-// Refresh sidebar every 10s when agent selected
-setInterval(() => {
-  if (selectedAgentId) loadAgentDetails(selectedAgentId);
-}, 10000);
+// Count total memories for stat
+setInterval(async () => {
+  try {
+    const w = await fetch('/api/world').then(r => r.json());
+    const talking = w.agents.filter(a => a.status === 'talking').length;
+    document.getElementById('stat-talking').textContent = talking;
+  } catch {}
+}, 5000);
 </script>
 </body>
 </html>
